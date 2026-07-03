@@ -2,7 +2,7 @@
 
 Fast CCTV motion review generator for one or more video files.
 
-`motion-fast` scans input videos for frame-to-frame changes, merges nearby motion into events, and builds condensed review MP4 files directly from the source segments.
+`motion-fast` scans input videos for motion, merges nearby detections into events, and builds condensed review MP4 files directly from the source segments. By default it scans only video keyframes for faster analysis; use `--all-frames` for the slower sampled-frame scan when you need to catch motion between keyframes.
 
 The project can be installed as the `motion-fast` command, or run directly with `python -m motion_fast ...`. The implementation is split into the `motion_fast_lib/` package:
 
@@ -38,7 +38,7 @@ For a system-wide install, run from an elevated terminal:
 
     python -m pip install .
 
-To install directly from a GitHub repo once it exists, use one of these forms:
+To install directly from a GitHub repo:
 
     python -m pip install git+https://github.com/andygock/motion-fast
 
@@ -97,13 +97,17 @@ For an input named `INPUT.avi`, the final review video is `review_INPUT.mp4`
 
 ## Common Commands
 
-Normal review, default settings:
+Normal review, default settings. This scans keyframes only:
 
     motion-fast INPUT.avi
 
-Using keyframes only, can have significantly faster analysis, 10x or more. But if keyframes are too far apart, it may miss events.
+Keyframe-only analysis can be 10x faster or more. But if keyframes are too far apart, it may miss events. `--keyframes-only` is accepted for explicitness, but it is already the default:
 
     motion-fast INPUT.avi --keyframes-only
+
+Use sampled frames instead of only keyframes when keyframe spacing is too wide or motion is being missed:
+
+    motion-fast INPUT.avi --all-frames
 
 Scan first 60s of video and check keyframe spacing first with:
 
@@ -113,9 +117,9 @@ Fast review with GPU encoding and 32x playback:
 
     motion-fast INPUT.avi --speed 32 --nvenc
 
-Lower-resolution, low-FPS scan with wider event padding:
+Lower-resolution, low-FPS sampled-frame scan with wider event padding:
 
-    motion-fast INPUT.avi --width 160 --fps 0.5 --motion-threshold 400 --pixel-threshold 35 --merge-gap 20 --pre-roll 5 --post-roll 8 --speed 16 --nvenc
+    motion-fast INPUT.avi --all-frames --width 160 --fps 0.5 --motion-threshold 400 --pixel-threshold 35 --merge-gap 20 --pre-roll 5 --post-roll 8 --speed 16 --nvenc
 
 Detect motion and write `events.csv` only:
 
@@ -125,9 +129,9 @@ Build a review and also keep the event log:
 
     motion-fast /path/*.avi --write-events-csv
 
-Very fast keyframe-only scan:
+Very fast detect-only scan:
 
-    motion-fast /path/*.avi --keyframes-only --width 160 --motion-threshold 400 --pixel-threshold 35 --merge-gap 30 --pre-roll 8 --post-roll 12 --detect-only
+    motion-fast /path/*.avi --width 160 --motion-threshold 400 --pixel-threshold 35 --merge-gap 30 --pre-roll 8 --post-roll 12 --detect-only
 
 In keyframe-only mode, the script no longer runs a separate `ffprobe` keyframe timestamp pass. It reads FFmpeg `showinfo` timestamps while scanning the keyframes; if timestamps are unavailable, motion times are estimated across the full video duration.
 
@@ -136,7 +140,7 @@ In keyframe-only mode, the script no longer runs a separate `ffprobe` keyframe t
 Useful options:
 
 - `--width`: Analysis width in pixels. Smaller is faster but less detailed. Default: `320`.
-- `--fps`: Analysis sample rate. Lower values are faster but can miss short motion. Default: `2`.
+- `--fps`: Analysis sample rate for `--all-frames` mode. Lower values are faster but can miss short motion. Default: `2`.
 - `--pixel-threshold`: Per-pixel brightness difference required to count as changed. Default: `30`.
 - `--motion-threshold`: Number of changed pixels required to mark a frame as motion. Default: `200`.
 - `--min-consecutive`: Consecutive motion frames required before motion is accepted. Default: `1`.
@@ -147,7 +151,7 @@ Useful options:
 
 If too much footage is included, increase `--motion-threshold` or `--pixel-threshold`.
 
-If motion is missed, decrease `--motion-threshold`, decrease `--pixel-threshold`, increase `--fps`, or use `--color-detect`.
+If motion is missed, decrease `--motion-threshold`, decrease `--pixel-threshold`, use `--color-detect`, or switch to `--all-frames`. In `--all-frames` mode, increasing `--fps` can also help catch shorter motion.
 
 ## Output Options
 
@@ -156,6 +160,8 @@ If motion is missed, decrease `--motion-threshold`, decrease `--pixel-threshold`
 - `--no-clobber`: Skip processing if the final review MP4 already exists.
 - `--detect-only`: Only scan and write `events.csv`; do not build a review video.
 - `--write-events-csv`: Write `events.csv` during normal review runs. Detect-only mode always writes it.
+- `--keyframes-only`: Scan only video keyframes. Default: enabled.
+- `--all-frames`: Scan sampled frames instead of only keyframes. Slower, but can catch motion between keyframes. The sample rate is controlled by `--fps`.
 - `--speed N`: Speed up the review video by `N`. Default: `1`.
 - `--copy-video`: Stream-copy the review. Default: enabled. Fastest, but cuts may be less accurate.
 - `--reencode-clips`: Re-encode the review instead of stream-copying it.
@@ -186,7 +192,7 @@ If FFmpeg was not built with CUDA or NVENC support, use `--no-cuda-decode` and o
 - The script accepts one or more input video files or glob patterns, such as `*.avi` or `/path/*.avi`.
 - Inaccessible files matched by a glob pattern are reported and skipped. If every match is inaccessible, the run exits with `No accessible input files were found.`
 - It was designed for Windows CCTV AVI/H.264 footage, but should work with other FFmpeg-readable video files.
-- Keyframe-only mode avoids a separate keyframe timestamp probe and is faster, but can miss motion that occurs between keyframes.
+- Keyframe-only mode is the default. It avoids a separate keyframe timestamp probe and is faster, but can miss motion that occurs between keyframes.
 - In keyframe-only mode, the scan stats report the observed average keyframe spacing once enough timestamps are collected, without an extra probe pass.
 - The final review MP4 is written beside each input video, not inside the output directory.
 - Normal review runs keep the event list and FFmpeg concat manifest in memory. `events.csv` is written only with `--detect-only` or `--write-events-csv`.

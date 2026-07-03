@@ -38,7 +38,7 @@ def main() -> None:
         "--fps",
         type=float,
         default=2.0,
-        help="Analysis sample rate. Default: 2",
+        help="Analysis sample rate for --all-frames mode. Default: 2",
     )
 
     parser.add_argument(
@@ -103,10 +103,19 @@ def main() -> None:
         help="Disable FFmpeg CUDA hardware decode during scanning.",
     )
 
-    parser.add_argument(
+    keyframe_group = parser.add_mutually_exclusive_group()
+    keyframe_group.add_argument(
         "--keyframes-only",
         action="store_true",
-        help="Scan only H.264 keyframes. Much faster when keyframes are frequent, but may miss short motion between keyframes.",
+        default=True,
+        help="Scan only H.264 keyframes. This is the default. Much faster when keyframes are frequent, but may miss short motion between keyframes.",
+    )
+
+    keyframe_group.add_argument(
+        "--all-frames",
+        dest="keyframes_only",
+        action="store_false",
+        help="Scan sampled frames instead of only keyframes. Slower, but can catch motion between keyframes.",
     )
 
     parser.add_argument(
