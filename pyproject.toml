@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "motion-fast"
+version = "0.1.0"
+description = "Fast CCTV motion review generator for one or more video files."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+]
+
+[project.scripts]
+motion-fast = "motion_fast_lib.cli:main"
+
+[tool.setuptools]
+py-modules = ["motion_fast"]
+
+[tool.setuptools.packages.find]
+include = ["motion_fast_lib*"]

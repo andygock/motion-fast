@@ -1,0 +1,8 @@
+*_review
+*.bak
+.venv
+*.avi
+*.mp4
+*.csv
+__pycache__
+*.egg-info
