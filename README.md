@@ -153,6 +153,7 @@ Useful options:
 - `--pre-roll`: Seconds to include before detected motion. Default: `0.5`.
 - `--post-roll`: Seconds to include after detected motion. Default: `0.5`.
 - `--min-event-duration`: Discard merged events shorter than this many seconds. Default: `1`.
+- `--color-detect`: Compare RGB channels instead of grayscale so color-only changes can count as motion.
 
 If too much footage is included, increase `--motion-threshold` or `--pixel-threshold`.
 
@@ -172,6 +173,9 @@ If motion is missed, decrease `--motion-threshold`, decrease `--pixel-threshold`
 - `--copy-video`: Stream-copy the review. Default: enabled. Fastest, but cuts may be less accurate.
 - `--reencode-clips`: Re-encode the review instead of stream-copying it.
 - `--extract-workers N`: FFmpeg thread count used when encoding the review. Default: `0` = auto, using all logical CPUs.
+- `--crf N`: Quality value for encoded review output. libx264 uses CRF, NVENC uses CQ. Default: `28`.
+- `--preset NAME`: libx264 preset when not using NVENC. Default: `veryfast`.
+- `--debug-every N`: Progress update interval in seconds. Default: `1`.
 
 ## GPU Options
 
@@ -192,6 +196,24 @@ When you need speed-up or re-encoding, use multi-threaded encoding:
     motion-fast input.avi --reencode-clips --speed 4 --extract-workers 8
 
 If FFmpeg was not built with CUDA or NVENC support, use `--no-cuda-decode` and omit `--nvenc`.
+
+## Tests
+
+The test suite uses Python's built-in `unittest` runner and does not require FFmpeg. The current tests cover pure helper behavior and safety-sensitive edge cases:
+
+- time formatting and millisecond carry behavior
+- live keyframe-spacing summary formatting
+- keyframe ordinal-to-timestamp mapping and fallback estimation
+- safe event output directory handling
+- per-input output directory naming for multiple inputs
+
+Run the tests from the repository root:
+
+    python -m unittest discover -s tests
+
+You can also run a syntax/import check with:
+
+    python -m compileall motion_fast.py motion_fast_lib tests
 
 ## Notes
 
