@@ -58,12 +58,12 @@ def parse_rate(value: str | None) -> float | None:
 
 def fmt_time(seconds: float) -> str:
     seconds = max(0.0, seconds)
-    whole = int(seconds)
-    ms = int(round((seconds - whole) * 1000))
+    total_ms = int(round(seconds * 1000))
 
-    h = whole // 3600
-    m = (whole % 3600) // 60
-    s = whole % 60
+    h = total_ms // 3_600_000
+    m = (total_ms % 3_600_000) // 60_000
+    s = (total_ms % 60_000) // 1000
+    ms = total_ms % 1000
 
     return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
 

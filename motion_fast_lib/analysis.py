@@ -51,6 +51,55 @@ def estimate_keyframe_time(
     return float(frame_index)
 
 
+def drain_timestamp_queue(
+    timestamp_queue: queue.Queue[float],
+    keyframe_timestamps: list[float],
+) -> None:
+    while True:
+        try:
+            keyframe_timestamps.append(timestamp_queue.get_nowait())
+        except queue.Empty:
+            return
+
+
+def map_keyframe_motion_times(
+    motion_frames: list[MotionFrame],
+    *,
+    keyframe_timestamps: list[float],
+    decoded_keyframes: int,
+    duration: float,
+) -> list[MotionFrame]:
+    if not motion_frames:
+        return []
+
+    if len(keyframe_timestamps) >= decoded_keyframes:
+        return [
+            MotionFrame(
+                time_s=keyframe_timestamps[int(mf.time_s)],
+                changed_pixels=mf.changed_pixels,
+            )
+            for mf in motion_frames
+        ]
+
+    if len(keyframe_timestamps) >= 2:
+        return [
+            MotionFrame(
+                time_s=estimate_keyframe_time(int(mf.time_s), keyframe_timestamps),
+                changed_pixels=mf.changed_pixels,
+            )
+            for mf in motion_frames
+        ]
+
+    scale = duration / max(1, decoded_keyframes - 1)
+    return [
+        MotionFrame(
+            time_s=min(duration, mf.time_s * scale),
+            changed_pixels=mf.changed_pixels,
+        )
+        for mf in motion_frames
+    ]
+
+
 def build_decode_command(
     input_path: Path,
     width: int,
@@ -187,7 +236,6 @@ def detect_motion(
     timestamp_queue: queue.Queue[float] = queue.Queue()
     stderr_lines: list[str] = []
     stderr_thread: threading.Thread | None = None
-    showinfo_timestamps_available: bool | None = None
 
     pipe = subprocess.Popen(
         cmd,
@@ -233,21 +281,6 @@ def detect_motion(
                 f"WARNING: short frame read: {len(raw)} bytes, expected {frame_bytes}")
             break
 
-        current_keyframe_time: float | None = None
-        if keyframes_only:
-            if showinfo_timestamps_available is not False:
-                timeout = 2.0 if showinfo_timestamps_available is None else 0.1
-                try:
-                    current_keyframe_time = timestamp_queue.get(timeout=timeout)
-                    keyframe_timestamps.append(current_keyframe_time)
-                    showinfo_timestamps_available = True
-                except queue.Empty:
-                    if showinfo_timestamps_available is None:
-                        showinfo_timestamps_available = False
-
-            if current_keyframe_time is None:
-                current_keyframe_time = estimate_keyframe_time(frame_index, keyframe_timestamps)
-
         if color_detect:
             current = np.frombuffer(
                 raw, dtype=np.uint8).reshape((height, width, 3))
@@ -266,10 +299,7 @@ def detect_motion(
             peak_changed = max(peak_changed, changed)
 
             if keyframes_only:
-                if current_keyframe_time is not None:
-                    t = current_keyframe_time
-                else:
-                    t = estimate_keyframe_time(frame_index, keyframe_timestamps)
+                t = float(frame_index)
             else:
                 t = frame_index / sample_fps
 
@@ -291,6 +321,7 @@ def detect_motion(
         now = time.time()
         if now - last_debug >= debug_every:
             if keyframes_only:
+                drain_timestamp_queue(timestamp_queue, keyframe_timestamps)
                 processed_s = estimate_keyframe_time(frame_index, keyframe_timestamps)
             else:
                 processed_s = frame_index / sample_fps
@@ -328,7 +359,8 @@ def detect_motion(
             pipe.wait()
 
         if stderr_thread is not None:
-            stderr_thread.join(timeout=1)
+            stderr_thread.join()
+        drain_timestamp_queue(timestamp_queue, keyframe_timestamps)
         stderr_output = "\n".join(stderr_lines).encode()
     else:
         try:
@@ -344,17 +376,22 @@ def detect_motion(
             print(stderr_output.decode(errors="replace"))
         die("FFmpeg exited with an error")
 
-    if keyframes_only and not keyframe_timestamps and frame_index > 1:
-        print()
-        print("WARNING: no keyframe timestamps captured; estimating event times")
-        scale = info.duration / max(1, frame_index - 1)
-        motion_frames = [
-            MotionFrame(
-                time_s=min(info.duration, mf.time_s * scale),
-                changed_pixels=mf.changed_pixels,
-            )
-            for mf in motion_frames
-        ]
+    if keyframes_only:
+        if len(keyframe_timestamps) < frame_index:
+            print()
+            if keyframe_timestamps:
+                print(
+                    "WARNING: incomplete keyframe timestamps captured; "
+                    "estimating some event times"
+                )
+            else:
+                print("WARNING: no keyframe timestamps captured; estimating event times")
+        motion_frames = map_keyframe_motion_times(
+            motion_frames,
+            keyframe_timestamps=keyframe_timestamps,
+            decoded_keyframes=frame_index,
+            duration=info.duration,
+        )
 
     print()
     if keyframes_only:

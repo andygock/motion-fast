@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import glob
-import shutil
 import time
 from pathlib import Path
 
@@ -16,12 +15,15 @@ from .utils import die, fmt_time
 
 def prepare_output_dir(output_dir: Path, keep_existing: bool) -> None:
     if output_dir.exists():
-        if keep_existing:
-            return
+        if not output_dir.is_dir():
+            die(f"Output path exists and is not a directory: {output_dir}")
 
-        shutil.rmtree(output_dir)
+    else:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    events_csv = output_dir / "events.csv"
+    if events_csv.exists() and not events_csv.is_file():
+        die(f"Event log path exists and is not a file: {events_csv}")
 
 
 def print_events(events: list[Event]) -> None:

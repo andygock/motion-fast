@@ -88,6 +88,7 @@ By default, each input creates only:
 - `review_<input_stem>.mp4` beside the input video
 
 No `<input_stem>_motion_review` directory is created during a normal review run. Use `--write-events-csv` if you also want an `events.csv` sidecar, or `--detect-only` if you only want the event log.
+Existing review MP4 files are not overwritten by default. Use `--overwrite` to replace an existing review file.
 
 Example:
 
@@ -129,11 +130,15 @@ Build a review and also keep the event log:
 
     motion-fast /path/*.avi --write-events-csv
 
+Overwrite an existing review MP4:
+
+    motion-fast INPUT.avi --overwrite
+
 Very fast detect-only scan:
 
     motion-fast /path/*.avi --width 160 --motion-threshold 400 --pixel-threshold 35 --merge-gap 30 --pre-roll 8 --post-roll 12 --detect-only
 
-In keyframe-only mode, the script no longer runs a separate `ffprobe` keyframe timestamp pass. It reads FFmpeg `showinfo` timestamps while scanning the keyframes; if timestamps are unavailable, motion times are estimated across the full video duration.
+In keyframe-only mode, the script no longer runs a separate `ffprobe` keyframe timestamp pass. It reads FFmpeg `showinfo` timestamps while scanning the keyframes, then maps detected keyframe ordinals to the complete timestamp list after the scan. If timestamps are unavailable or incomplete, motion times are estimated and the script prints a warning.
 
 ## Tuning Motion Detection
 
@@ -155,9 +160,10 @@ If motion is missed, decrease `--motion-threshold`, decrease `--pixel-threshold`
 
 ## Output Options
 
-- `--out-dir PATH`: Directory for `events.csv` when it is written. With multiple inputs, this is used as a parent directory and each input gets its own `<input_stem>_motion_review` subdirectory.
-- `--keep-existing`: Do not delete an existing `events.csv` output directory before running.
-- `--no-clobber`: Skip processing if the final review MP4 already exists.
+- `--out-dir PATH`: Directory for `events.csv` when it is written. With multiple inputs, this is used as a parent directory and each input gets its own `<input_stem>_motion_review` subdirectory. Existing unrelated files in this directory are left untouched.
+- `--keep-existing`: Compatibility option. Event output directories are never deleted; existing unrelated files are kept.
+- `--no-clobber`: Skip processing if the final review MP4 already exists. Default: enabled.
+- `--overwrite`: Replace an existing final review MP4.
 - `--detect-only`: Only scan and write `events.csv`; do not build a review video.
 - `--write-events-csv`: Write `events.csv` during normal review runs. Detect-only mode always writes it.
 - `--keyframes-only`: Scan only video keyframes. Default: enabled.
@@ -196,3 +202,5 @@ If FFmpeg was not built with CUDA or NVENC support, use `--no-cuda-decode` and o
 - In keyframe-only mode, the scan stats report the observed average keyframe spacing once enough timestamps are collected, without an extra probe pass.
 - The final review MP4 is written beside each input video, not inside the output directory.
 - Normal review runs keep the event list and FFmpeg concat manifest in memory. `events.csv` is written only with `--detect-only` or `--write-events-csv`.
+- Event output directories are created when needed but are not deleted. Writing `events.csv` overwrites that file only.
+- Invalid numeric options, such as negative roll values or out-of-range threshold values, are rejected before scanning.

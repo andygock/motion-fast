@@ -169,13 +169,23 @@ def main() -> None:
     parser.add_argument(
         "--keep-existing",
         action="store_true",
-        help="Do not delete the existing events.csv output directory before running.",
+        help="Compatibility option. Event output directories are never deleted; existing unrelated files are kept.",
     )
 
-    parser.add_argument(
+    clobber_group = parser.add_mutually_exclusive_group()
+    clobber_group.add_argument(
         "--no-clobber",
+        dest="no_clobber",
         action="store_true",
-        help="Skip processing if the final review MP4 already exists beside the input file.",
+        default=True,
+        help="Skip processing if the final review MP4 already exists beside the input file. This is the default.",
+    )
+
+    clobber_group.add_argument(
+        "--overwrite",
+        dest="no_clobber",
+        action="store_false",
+        help="Overwrite an existing final review MP4.",
     )
 
     parser.add_argument(
@@ -205,11 +215,41 @@ def main() -> None:
     if args.fps <= 0:
         die("--fps must be greater than zero")
 
+    if not 0 <= args.pixel_threshold <= 255:
+        die("--pixel-threshold must be between 0 and 255")
+
+    if args.motion_threshold < 1:
+        die("--motion-threshold must be at least 1")
+
+    if args.min_consecutive < 1:
+        die("--min-consecutive must be at least 1")
+
+    if args.merge_gap < 0:
+        die("--merge-gap must be zero or greater")
+
+    if args.pre_roll < 0:
+        die("--pre-roll must be zero or greater")
+
+    if args.post_roll < 0:
+        die("--post-roll must be zero or greater")
+
+    if args.min_event_duration < 0:
+        die("--min-event-duration must be zero or greater")
+
     if args.speed <= 0:
         die("--speed must be greater than zero")
 
+    if not 0 <= args.crf <= 51:
+        die("--crf must be between 0 and 51")
+
+    if not args.preset.strip():
+        die("--preset must not be empty")
+
     if args.extract_workers < 0:
         die("--extract-workers must be zero or greater")
+
+    if args.debug_every <= 0:
+        die("--debug-every must be greater than zero")
 
     if not shutil.which("ffmpeg"):
         die("ffmpeg was not found on PATH")
