@@ -1,1 +1,1 @@
-Every time you update `motion_fast.py`, make sure to also update `README.md` to reflect any changes in functionality, usage instructions, or dependencies. This ensures that users have the most accurate and up-to-date information when using the script.
+Every time you edit this project, make sure to also update `README.md` to reflect any changes in functionality, usage instructions, or dependencies. This ensures that users have the most accurate and up-to-date information when using the script.
