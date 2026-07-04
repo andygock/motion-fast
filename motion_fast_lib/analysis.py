@@ -183,6 +183,21 @@ def summarize_keyframe_spacing(keyframe_timestamps: list[float]) -> str | None:
     return f"avg {fmt_time(avg_gap)} (min {fmt_time(min_gap)}, max {fmt_time(max_gap)})"
 
 
+def summarize_live_keyframe_spacing(keyframe_timestamps: list[float]) -> str:
+    gaps = [
+        later - earlier
+        for earlier, later in zip(keyframe_timestamps, keyframe_timestamps[1:])
+        if later >= earlier
+    ]
+
+    if not gaps:
+        return "kf_gap=measuring"
+
+    avg_gap = sum(gaps) / len(gaps)
+    max_gap = max(gaps)
+    return f"kf_gap=avg {fmt_time(avg_gap)} max {fmt_time(max_gap)}"
+
+
 def detect_motion(
     input_path: Path,
     info: VideoInfo,
@@ -342,7 +357,12 @@ def detect_motion(
                 f"frames={frame_index:,}  "
                 f"motion={len(motion_frames):,}  "
                 f"changed={last_changed:,}  "
-                f"peak={peak_changed:,}",
+                f"peak={peak_changed:,}"
+                + (
+                    f"  {summarize_live_keyframe_spacing(keyframe_timestamps)}"
+                    if keyframes_only
+                    else ""
+                ),
                 end="",
                 flush=True,
             )

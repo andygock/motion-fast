@@ -138,7 +138,7 @@ Very fast detect-only scan:
 
     motion-fast /path/*.avi --width 160 --motion-threshold 400 --pixel-threshold 35 --merge-gap 30 --pre-roll 8 --post-roll 12 --detect-only
 
-In keyframe-only mode, the script no longer runs a separate `ffprobe` keyframe timestamp pass. It reads FFmpeg `showinfo` timestamps while scanning the keyframes, then maps detected keyframe ordinals to the complete timestamp list after the scan. If timestamps are unavailable or incomplete, motion times are estimated and the script prints a warning.
+In keyframe-only mode, the script no longer runs a separate `ffprobe` keyframe timestamp pass. It reads FFmpeg `showinfo` timestamps while scanning the keyframes, shows the observed average and maximum keyframe gap in the live progress status, then maps detected keyframe ordinals to the complete timestamp list after the scan. If timestamps are unavailable or incomplete, motion times are estimated and the script prints a warning.
 
 ## Tuning Motion Detection
 
@@ -199,7 +199,7 @@ If FFmpeg was not built with CUDA or NVENC support, use `--no-cuda-decode` and o
 - Inaccessible files matched by a glob pattern are reported and skipped. If every match is inaccessible, the run exits with `No accessible input files were found.`
 - It was designed for Windows CCTV AVI/H.264 footage, but should work with other FFmpeg-readable video files.
 - Keyframe-only mode is the default. It avoids a separate keyframe timestamp probe and is faster, but can miss motion that occurs between keyframes.
-- In keyframe-only mode, the scan stats report the observed average keyframe spacing once enough timestamps are collected, without an extra probe pass.
+- In keyframe-only mode, the live progress status includes `kf_gap=avg ... max ...` once enough timestamps are collected, without an extra probe pass. Large gaps mean motion between keyframes can be missed; cancel and rerun with `--all-frames` if the observed gap is too wide for your footage.
 - The final review MP4 is written beside each input video, not inside the output directory.
 - Normal review runs keep the event list and FFmpeg concat manifest in memory. `events.csv` is written only with `--detect-only` or `--write-events-csv`.
 - Event output directories are created when needed but are not deleted. Writing `events.csv` overwrites that file only.

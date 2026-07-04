@@ -7,7 +7,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from motion_fast_lib.analysis import map_keyframe_motion_times
+from motion_fast_lib.analysis import (
+    map_keyframe_motion_times,
+    summarize_live_keyframe_spacing,
+)
 from motion_fast_lib.models import MotionFrame
 from motion_fast_lib.runner import output_dir_for_input, prepare_output_dir
 from motion_fast_lib.utils import fmt_time
@@ -30,6 +33,14 @@ class UtilityTests(unittest.TestCase):
 
 
 class KeyframeTimestampTests(unittest.TestCase):
+    def test_live_keyframe_spacing_summary_uses_observed_gaps(self) -> None:
+        # The progress line uses this compact summary while the scan is still
+        # running. It reports the average and largest observed keyframe gap so a
+        # user can stop early if the source has sparse keyframes.
+        summary = summarize_live_keyframe_spacing([0.0, 5.0, 11.0, 23.0])
+
+        self.assertEqual(summary, "kf_gap=avg 00:00:07.667 max 00:00:12.000")
+
     def test_maps_motion_frame_ordinals_to_keyframe_timestamps(self) -> None:
         # During keyframe-only scanning, motion detections are first stored with
         # their decoded keyframe ordinal in MotionFrame.time_s. After FFmpeg has
