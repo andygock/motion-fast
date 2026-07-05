@@ -8,7 +8,7 @@ from pathlib import Path
 from .analysis import detect_motion
 from .events import merge_motion_frames, write_events_csv
 from .probe import ffprobe_video
-from .review import build_review_video, resolve_ffmpeg_threads
+from .review import build_review_video, ffmpeg_encoder_usable, resolve_ffmpeg_threads
 from .models import Event
 from .utils import die, fmt_time
 
@@ -150,7 +150,9 @@ def process_input(
         use_cuda=not args.no_cuda_decode,
         keyframes_only=args.keyframes_only,
         color_detect=args.color_detect,
+        timestamp_mode=args.timestamp_mode,
         debug_every=args.debug_every,
+        quiet=args.quiet,
     )
 
     events = merge_motion_frames(
@@ -192,6 +194,14 @@ def process_input(
     if ffmpeg_threads > 1 and not (args.copy_video and args.speed == 1):
         print(f"  FFmpeg threads   : {ffmpeg_threads}")
 
+    encode_required = not (args.copy_video and args.speed == 1)
+    use_nvenc = args.encoder == "nvenc" or args.nvenc
+    if encode_required and args.encoder == "auto" and not args.nvenc:
+        use_nvenc = ffmpeg_encoder_usable("h264_nvenc")
+
+    if encode_required:
+        print(f"  Encoder          : {'h264_nvenc' if use_nvenc else 'libx264'}")
+
     print()
     print(f"Creating {review_mp4.name}")
 
@@ -200,7 +210,7 @@ def process_input(
         output_path=review_mp4,
         events=events,
         speed=args.speed,
-        use_nvenc=args.nvenc,
+        use_nvenc=use_nvenc,
         crf=args.crf,
         preset=args.preset,
         copy_video=args.copy_video,

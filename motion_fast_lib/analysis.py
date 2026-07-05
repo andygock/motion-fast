@@ -14,11 +14,13 @@ from .utils import die, fmt_time, safe_even_height
 
 
 SHOWINFO_TIME_RE = re.compile(r"pts_time:([^\s]+)")
+PROGRESS_TIME_RE = re.compile(r"out_time_ms=(\d+)")
 
 
 def read_showinfo_stderr(
     stderr_pipe,
     timestamp_queue: queue.Queue[float],
+    progress_queue: queue.Queue[float],
     stderr_lines: list[str],
 ) -> None:
     for raw_line in iter(stderr_pipe.readline, b""):
@@ -29,7 +31,31 @@ def read_showinfo_stderr(
                 timestamp_queue.put(float(match.group(1)))
             except ValueError:
                 pass
-        elif line:
+            continue
+
+        match = PROGRESS_TIME_RE.fullmatch(line)
+        if match:
+            progress_queue.put(int(match.group(1)) / 1_000_000)
+            continue
+
+        if line.startswith(
+            (
+                "frame=",
+                "fps=",
+                "stream_",
+                "bitrate=",
+                "total_size=",
+                "out_time_us=",
+                "out_time=",
+                "dup_frames=",
+                "drop_frames=",
+                "speed=",
+                "progress=",
+            )
+        ):
+            continue
+
+        if line:
             stderr_lines.append(line)
 
 
@@ -60,6 +86,18 @@ def drain_timestamp_queue(
             keyframe_timestamps.append(timestamp_queue.get_nowait())
         except queue.Empty:
             return
+
+
+def drain_progress_queue(
+    progress_queue: queue.Queue[float],
+    fallback: float,
+) -> float:
+    latest = fallback
+    while True:
+        try:
+            latest = progress_queue.get_nowait()
+        except queue.Empty:
+            return latest
 
 
 def map_keyframe_motion_times(
@@ -108,14 +146,23 @@ def build_decode_command(
     use_cuda: bool,
     keyframes_only: bool,
     color_detect: bool,
+    timestamp_mode: str,
 ) -> list[str]:
+    use_showinfo = keyframes_only and timestamp_mode == "exact"
+    use_progress = keyframes_only and timestamp_mode == "approx"
     cmd = [
         "ffmpeg",
         "-hide_banner",
         "-loglevel",
-        "info" if keyframes_only else "error",
+        "info" if use_showinfo else "error",
         "-nostats",
     ]
+
+    if use_progress:
+        cmd += [
+            "-progress",
+            "pipe:2",
+        ]
 
     # This must appear before -i because it is a decoder option.
     # It tells FFmpeg to output only keyframes during the analysis pass.
@@ -135,7 +182,11 @@ def build_decode_command(
         # Do not apply fps= here. The whole point is to analyse the native
         # keyframe stream with as little decoding/filtering work as possible.
         pix_fmt = "rgb24" if color_detect else "gray"
-        vf = f"showinfo,scale={width}:{height}:flags=fast_bilinear,format={pix_fmt}"
+        filters = []
+        if use_showinfo:
+            filters.append("showinfo")
+        filters.extend([f"scale={width}:{height}:flags=fast_bilinear", f"format={pix_fmt}"])
+        vf = ",".join(filters)
     else:
         pix_fmt = "rgb24" if color_detect else "gray"
         vf = f"fps={sample_fps},scale={width}:{height}:flags=fast_bilinear,format={pix_fmt}"
@@ -210,32 +261,37 @@ def detect_motion(
     use_cuda: bool,
     keyframes_only: bool,
     color_detect: bool,
+    timestamp_mode: str,
     debug_every: float,
+    quiet: bool,
 ) -> list[MotionFrame]:
     height = safe_even_height(info.width, info.height, width)
     frame_bytes = width * height * (3 if color_detect else 1)
 
-    print("Scan settings")
-    print(f"  Input             : {input_path}")
-    print(
-        f"  Source            : {info.width}x{info.height}, {info.fps:.3f} fps")
-    print(f"  Duration          : {fmt_time(info.duration)}")
-    mode_label = "RGB" if color_detect else "gray"
-    if keyframes_only:
+    if not quiet:
+        print("Scan settings")
+        print(f"  Input             : {input_path}")
         print(
-            f"  Analysis          : {width}x{height}, keyframes only, {mode_label}")
-    else:
+            f"  Source            : {info.width}x{info.height}, {info.fps:.3f} fps")
+        print(f"  Duration          : {fmt_time(info.duration)}")
+        mode_label = "RGB" if color_detect else "gray"
+        if keyframes_only:
+            print(
+                f"  Analysis          : {width}x{height}, keyframes only, {mode_label}")
+        else:
+            print(
+                f"  Analysis          : {width}x{height}, {sample_fps:g} fps, {mode_label}")
+        print(f"  CUDA decode        : {'enabled' if use_cuda else 'disabled'}")
         print(
-            f"  Analysis          : {width}x{height}, {sample_fps:g} fps, {mode_label}")
-    print(f"  CUDA decode        : {'enabled' if use_cuda else 'disabled'}")
-    print(
-        f"  Keyframes only     : {'enabled' if keyframes_only else 'disabled'}")
-    if keyframes_only:
-        print("  Keyframe spacing  : measuring during scan")
-    print(f"  Pixel threshold   : {pixel_threshold}")
-    print(f"  Motion threshold  : {motion_threshold} changed pixels")
-    print(f"  Min consecutive   : {min_consecutive}")
-    print()
+            f"  Keyframes only     : {'enabled' if keyframes_only else 'disabled'}")
+        if keyframes_only:
+            print(f"  Timestamp mode    : {timestamp_mode}")
+            if timestamp_mode == "exact":
+                print("  Keyframe spacing  : measuring during scan")
+        print(f"  Pixel threshold   : {pixel_threshold}")
+        print(f"  Motion threshold  : {motion_threshold} changed pixels")
+        print(f"  Min consecutive   : {min_consecutive}")
+        print()
 
     cmd = build_decode_command(
         input_path=input_path,
@@ -245,10 +301,14 @@ def detect_motion(
         use_cuda=use_cuda,
         keyframes_only=keyframes_only,
         color_detect=color_detect,
+        timestamp_mode=timestamp_mode,
     )
 
     keyframe_timestamps: list[float] = []
+    collect_keyframe_timestamps = keyframes_only and timestamp_mode == "exact"
+    collect_progress = keyframes_only and timestamp_mode == "approx"
     timestamp_queue: queue.Queue[float] = queue.Queue()
+    progress_queue: queue.Queue[float] = queue.Queue()
     stderr_lines: list[str] = []
     stderr_thread: threading.Thread | None = None
 
@@ -262,17 +322,19 @@ def detect_motion(
     if pipe.stdout is None:
         die("Could not read FFmpeg stdout")
 
-    if keyframes_only:
+    if collect_keyframe_timestamps or collect_progress:
         if pipe.stderr is None:
-            die("Could not read FFmpeg stderr for keyframe timestamps")
+            die("Could not read FFmpeg stderr")
         stderr_thread = threading.Thread(
             target=read_showinfo_stderr,
-            args=(pipe.stderr, timestamp_queue, stderr_lines),
+            args=(pipe.stderr, timestamp_queue, progress_queue, stderr_lines),
             daemon=True,
         )
         stderr_thread.start()
 
-    previous: np.ndarray | None = None
+    previous_i16: np.ndarray | None = None
+    current_i16: np.ndarray | None = None
+    diff_buffer: np.ndarray | None = None
     motion_frames: list[MotionFrame] = []
 
     frame_index = 0
@@ -283,6 +345,7 @@ def detect_motion(
     last_debug = start_wall
     last_changed = 0
     peak_changed = 0
+    last_progress_s = 0.0
 
     while True:
         raw = pipe.stdout.read(frame_bytes)
@@ -304,12 +367,19 @@ def detect_motion(
 
         changed = 0
 
-        if previous is not None:
-            diff = np.abs(current.astype(np.int16) - previous.astype(np.int16))
+        if current_i16 is None:
+            current_i16 = np.empty_like(current, dtype=np.int16)
+        np.copyto(current_i16, current, casting="unsafe")
+
+        if previous_i16 is not None:
+            if diff_buffer is None:
+                diff_buffer = np.empty_like(current, dtype=np.int16)
+            np.subtract(current_i16, previous_i16, out=diff_buffer)
+            np.abs(diff_buffer, out=diff_buffer)
             if color_detect:
-                changed = int(np.count_nonzero(np.any(diff > pixel_threshold, axis=2)))
+                changed = int(np.count_nonzero(np.any(diff_buffer > pixel_threshold, axis=2)))
             else:
-                changed = int(np.count_nonzero(diff > pixel_threshold))
+                changed = int(np.count_nonzero(diff_buffer > pixel_threshold))
             last_changed = changed
             peak_changed = max(peak_changed, changed)
 
@@ -330,18 +400,62 @@ def detect_motion(
                 consecutive_motion = 0
                 pending_motion.clear()
 
-        previous = current.copy()
+        if previous_i16 is None:
+            previous_i16 = current_i16.copy()
+        else:
+            previous_i16, current_i16 = current_i16, previous_i16
         frame_index += 1
 
         now = time.time()
-        if now - last_debug >= debug_every:
+        if not quiet and now - last_debug >= debug_every:
+            elapsed = now - start_wall
+
+            if keyframes_only and not collect_keyframe_timestamps:
+                last_progress_s = drain_progress_queue(progress_queue, last_progress_s)
+                if last_progress_s > 0:
+                    processed_s = min(info.duration, last_progress_s)
+                    speed = processed_s / elapsed if elapsed > 0 else 0
+                    pct = min(100.0, (processed_s / info.duration)
+                              * 100.0) if info.duration > 0 else 0
+                    remaining_s = max(0.0, info.duration - processed_s)
+                    eta_s = remaining_s / speed if speed > 0 else 0.0
+                    print(
+                        "\r"
+                        f"Scanned {fmt_time(processed_s)} / {fmt_time(info.duration)} "
+                        f"({pct:5.1f}%)  "
+                        f"ETA {fmt_time(eta_s)}  "
+                        f"{speed:6.1f}x realtime  "
+                        f"keyframes={frame_index:,}  "
+                        f"motion={len(motion_frames):,}  "
+                        f"changed={last_changed:,}  "
+                        f"peak={peak_changed:,}",
+                        end="",
+                        flush=True,
+                    )
+                else:
+                    keyframe_rate = frame_index / elapsed if elapsed > 0 else 0.0
+                    print(
+                        "\r"
+                        f"Scanned keyframes={frame_index:,}  "
+                        f"elapsed={fmt_time(elapsed)}  "
+                        f"{keyframe_rate:6.1f} keyframes/s  "
+                        f"motion={len(motion_frames):,}  "
+                        f"changed={last_changed:,}  "
+                        f"peak={peak_changed:,}  "
+                        "waiting for FFmpeg progress",
+                        end="",
+                        flush=True,
+                    )
+                last_debug = now
+                continue
+
             if keyframes_only:
-                drain_timestamp_queue(timestamp_queue, keyframe_timestamps)
+                if collect_keyframe_timestamps:
+                    drain_timestamp_queue(timestamp_queue, keyframe_timestamps)
                 processed_s = estimate_keyframe_time(frame_index, keyframe_timestamps)
             else:
                 processed_s = frame_index / sample_fps
 
-            elapsed = now - start_wall
             speed = processed_s / elapsed if elapsed > 0 else 0
             pct = min(100.0, (processed_s / info.duration)
                       * 100.0) if info.duration > 0 else 0
@@ -360,7 +474,7 @@ def detect_motion(
                 f"peak={peak_changed:,}"
                 + (
                     f"  {summarize_live_keyframe_spacing(keyframe_timestamps)}"
-                    if keyframes_only
+                    if collect_keyframe_timestamps
                     else ""
                 ),
                 end="",
@@ -371,7 +485,7 @@ def detect_motion(
 
     stderr_output = b""
 
-    if keyframes_only:
+    if collect_keyframe_timestamps or collect_progress:
         try:
             pipe.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -381,6 +495,7 @@ def detect_motion(
         if stderr_thread is not None:
             stderr_thread.join()
         drain_timestamp_queue(timestamp_queue, keyframe_timestamps)
+        last_progress_s = drain_progress_queue(progress_queue, last_progress_s)
         stderr_output = "\n".join(stderr_lines).encode()
     else:
         try:
@@ -398,14 +513,15 @@ def detect_motion(
 
     if keyframes_only:
         if len(keyframe_timestamps) < frame_index:
-            print()
-            if keyframe_timestamps:
-                print(
-                    "WARNING: incomplete keyframe timestamps captured; "
-                    "estimating some event times"
-                )
-            else:
-                print("WARNING: no keyframe timestamps captured; estimating event times")
+            if collect_keyframe_timestamps:
+                print()
+                if keyframe_timestamps:
+                    print(
+                        "WARNING: incomplete keyframe timestamps captured; "
+                        "estimating some event times"
+                    )
+                else:
+                    print("WARNING: no keyframe timestamps captured; estimating event times")
         motion_frames = map_keyframe_motion_times(
             motion_frames,
             keyframe_timestamps=keyframe_timestamps,
@@ -413,13 +529,18 @@ def detect_motion(
             duration=info.duration,
         )
 
-    print()
-    if keyframes_only:
+    scan_elapsed = time.time() - start_wall
+
+    if not quiet:
+        print()
+    if keyframes_only and collect_keyframe_timestamps:
         spacing_summary = summarize_keyframe_spacing(keyframe_timestamps)
         if spacing_summary is not None:
             print(f"Observed keyframe spacing: {spacing_summary}")
             print()
     print(f"Scan complete. Motion frames detected: {len(motion_frames):,}")
+    if info.duration > 0 and scan_elapsed > 0:
+        print(f"Scan speed: {info.duration / scan_elapsed:,.1f}x realtime")
     print()
 
     return motion_frames

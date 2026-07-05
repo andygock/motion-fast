@@ -1,11 +1,40 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import shutil
+import traceback
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from .runner import process_input, resolve_input_paths
 from .utils import die
+
+
+def process_input_captured(
+    input_path: Path,
+    args: argparse.Namespace,
+    input_count: int,
+    input_index: int,
+) -> tuple[int, str, int]:
+    buffer = io.StringIO()
+    exit_code = 0
+    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+        try:
+            process_input(
+                input_path,
+                args,
+                input_count=input_count,
+                input_index=input_index,
+            )
+        except SystemExit as exc:
+            exit_code = int(exc.code) if isinstance(exc.code, int) else 1
+        except BaseException:
+            exit_code = 1
+            traceback.print_exc()
+
+    return input_index, buffer.getvalue(), exit_code
 
 
 def main() -> None:
@@ -127,7 +156,14 @@ def main() -> None:
     parser.add_argument(
         "--nvenc",
         action="store_true",
-        help="Use NVIDIA NVENC when encoding the review video.",
+        help="Use NVIDIA NVENC when encoding the review video. Same as --encoder nvenc.",
+    )
+
+    parser.add_argument(
+        "--encoder",
+        choices=("auto", "cpu", "nvenc"),
+        default="auto",
+        help="Encoder for review video re-encoding. auto uses NVENC when FFmpeg can run h264_nvenc, otherwise libx264. Default: auto",
     )
 
     parser.add_argument(
@@ -207,6 +243,26 @@ def main() -> None:
         help="Progress update interval in seconds. Default: 1",
     )
 
+    parser.add_argument(
+        "--timestamp-mode",
+        choices=("exact", "approx"),
+        default="exact",
+        help="Timestamp mapping for keyframe-only scans. exact parses FFmpeg showinfo timestamps; approx skips that logging and spreads keyframes across duration for more speed. Default: exact",
+    )
+
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress live scan progress. Final summaries are still printed.",
+    )
+
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Number of input files to process in parallel. Default: 1",
+    )
+
     args = parser.parse_args()
 
     if args.width < 16:
@@ -251,6 +307,12 @@ def main() -> None:
     if args.debug_every <= 0:
         die("--debug-every must be greater than zero")
 
+    if args.jobs < 1:
+        die("--jobs must be at least 1")
+
+    if args.nvenc:
+        args.encoder = "nvenc"
+
     if not shutil.which("ffmpeg"):
         die("ffmpeg was not found on PATH")
 
@@ -259,11 +321,41 @@ def main() -> None:
 
     input_paths = resolve_input_paths(args.inputs)
 
-    for index, input_path in enumerate(input_paths, start=1):
-        process_input(
-            input_path,
-            args,
-            input_count=len(input_paths),
-            input_index=index,
-        )
+    if args.jobs == 1 or len(input_paths) == 1:
+        for index, input_path in enumerate(input_paths, start=1):
+            process_input(
+                input_path,
+                args,
+                input_count=len(input_paths),
+                input_index=index,
+            )
+        return
+
+    worker_count = min(args.jobs, len(input_paths))
+    print(f"Processing {len(input_paths)} inputs with {worker_count} parallel jobs")
+    print("Live per-file progress is captured and printed when each job finishes.")
+
+    failed = False
+    with ProcessPoolExecutor(max_workers=worker_count) as executor:
+        futures = [
+            executor.submit(
+                process_input_captured,
+                input_path,
+                args,
+                len(input_paths),
+                index,
+            )
+            for index, input_path in enumerate(input_paths, start=1)
+        ]
+
+        for future in as_completed(futures):
+            _, output, exit_code = future.result()
+            if output:
+                print()
+                print(output, end="" if output.endswith("\n") else "\n")
+            if exit_code != 0:
+                failed = True
+
+    if failed:
+        die("One or more inputs failed")
 

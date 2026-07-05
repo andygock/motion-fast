@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 from .models import Event
@@ -20,6 +21,49 @@ def resolve_ffmpeg_threads(requested_threads: int) -> int:
         return requested_threads
 
     return os.cpu_count() or 1
+
+
+def ffmpeg_encoder_usable(encoder: str) -> bool:
+    try:
+        encoders = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-v", "error", "-encoders"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False
+
+    if encoder not in encoders.stdout:
+        return False
+
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=size=16x16:duration=0.1",
+                "-frames:v",
+                "1",
+                "-c:v",
+                encoder,
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False
+
+    return True
 
 
 def build_review_concat_manifest(

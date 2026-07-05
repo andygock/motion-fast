@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from motion_fast_lib.analysis import (
+    build_decode_command,
     map_keyframe_motion_times,
     summarize_live_keyframe_spacing,
 )
@@ -33,6 +34,39 @@ class UtilityTests(unittest.TestCase):
 
 
 class KeyframeTimestampTests(unittest.TestCase):
+    def test_exact_keyframe_mode_uses_showinfo_timestamps(self) -> None:
+        cmd = build_decode_command(
+            input_path=Path("input.avi"),
+            width=320,
+            height=180,
+            sample_fps=2.0,
+            use_cuda=False,
+            keyframes_only=True,
+            color_detect=False,
+            timestamp_mode="exact",
+        )
+
+        self.assertIn("showinfo,scale=320:180:flags=fast_bilinear,format=gray", cmd)
+        self.assertEqual(cmd[cmd.index("-loglevel") + 1], "info")
+
+    def test_approx_keyframe_mode_skips_showinfo_logging(self) -> None:
+        cmd = build_decode_command(
+            input_path=Path("input.avi"),
+            width=320,
+            height=180,
+            sample_fps=2.0,
+            use_cuda=False,
+            keyframes_only=True,
+            color_detect=False,
+            timestamp_mode="approx",
+        )
+
+        self.assertIn("scale=320:180:flags=fast_bilinear,format=gray", cmd)
+        self.assertNotIn("showinfo,scale=320:180:flags=fast_bilinear,format=gray", cmd)
+        self.assertIn("-progress", cmd)
+        self.assertEqual(cmd[cmd.index("-progress") + 1], "pipe:2")
+        self.assertEqual(cmd[cmd.index("-loglevel") + 1], "error")
+
     def test_live_keyframe_spacing_summary_uses_observed_gaps(self) -> None:
         # The progress line uses this compact summary while the scan is still
         # running. It reports the average and largest observed keyframe gap so a

@@ -12,6 +12,7 @@ The project can be installed as the `motion-fast` command, or run directly with 
 - `runner.py` and `cli.py`: input resolution, output handling, and CLI orchestration.
 
 The review stage is a single FFmpeg pass. The concat list is piped to FFmpeg in memory, so normal review runs do not create a temporary output directory or sidecar concat file. In re-encoded mode, `--extract-workers` controls FFmpeg thread count and auto-selects all logical CPUs.
+When re-encoding is required, `--encoder auto` uses NVENC if FFmpeg can run `h264_nvenc`, otherwise it falls back to libx264.
 
 ## Requirements
 
@@ -138,7 +139,39 @@ Very fast detect-only scan:
 
     motion-fast /path/*.avi --width 160 --motion-threshold 400 --pixel-threshold 35 --merge-gap 30 --pre-roll 8 --post-roll 12 --detect-only
 
+Maximum-throughput keyframe scan with approximate timestamps and no live progress:
+
+    motion-fast /path/*.avi --timestamp-mode approx --quiet
+
+Process several input files in parallel:
+
+    motion-fast /path/*.avi --jobs 4 --quiet
+
 In keyframe-only mode, the script no longer runs a separate `ffprobe` keyframe timestamp pass. It reads FFmpeg `showinfo` timestamps while scanning the keyframes, shows the observed average and maximum keyframe gap in the live progress status, then maps detected keyframe ordinals to the complete timestamp list after the scan. If timestamps are unavailable or incomplete, motion times are estimated and the script prints a warning.
+
+For maximum scan speed, use `--timestamp-mode approx`. This skips FFmpeg `showinfo` logging and maps decoded keyframe ordinals across the known video duration. It is faster and quieter, but event times are approximate if keyframes are not evenly spaced.
+
+## Maximum Speed Examples
+
+Fastest normal review for one file:
+
+    motion-fast INPUT.avi --timestamp-mode approx --quiet
+
+Fast batch detect-only scan for several files:
+
+    motion-fast /path/*.avi --detect-only --timestamp-mode approx --quiet --jobs 4 --width 160
+
+Fast re-encoded review when you need playback speed-up:
+
+    motion-fast INPUT.avi --speed 16 --encoder auto --timestamp-mode approx --quiet
+
+Main tradeoffs:
+
+- `--timestamp-mode approx` removes FFmpeg `showinfo` timestamp logging, but event times are estimated if keyframes are unevenly spaced.
+- In `--timestamp-mode approx`, live progress uses FFmpeg's lightweight progress output for video position and speed. If FFmpeg has not emitted progress yet, the status temporarily falls back to keyframes per second until the first progress update arrives.
+- `--jobs N` improves batch wall-clock time, but too many jobs can saturate disk, CPU, or GPU decode.
+- Lower `--width` reduces analysis work, but can miss small or subtle motion.
+- `--speed N` requires re-encoding, so use `--encoder auto` or `--encoder nvenc` when a GPU encoder is available.
 
 ## Tuning Motion Detection
 
@@ -176,6 +209,9 @@ If motion is missed, decrease `--motion-threshold`, decrease `--pixel-threshold`
 - `--crf N`: Quality value for encoded review output. libx264 uses CRF, NVENC uses CQ. Default: `28`.
 - `--preset NAME`: libx264 preset when not using NVENC. Default: `veryfast`.
 - `--debug-every N`: Progress update interval in seconds. Default: `1`.
+- `--timestamp-mode exact|approx`: Keyframe timestamp mapping mode. `exact` parses FFmpeg `showinfo` timestamps. `approx` skips that logging and estimates keyframe times from video duration for more speed. Default: `exact`.
+- `--quiet`: Suppress live scan progress. Final summaries are still printed.
+- `--jobs N`: Process up to `N` input files in parallel. Default: `1`. Parallel jobs capture each file's log and print it when that file finishes.
 
 ## GPU Options
 
@@ -186,6 +222,12 @@ CUDA decode is enabled by default during scanning. Disable it with:
 Use NVIDIA NVENC for review encoding:
 
     motion-fast input.avi --nvenc
+
+Choose the encoder explicitly when a review must be re-encoded:
+
+    motion-fast input.avi --speed 8 --encoder auto
+
+Encoder choices are `auto`, `cpu`, and `nvenc`. `auto` is the default and uses NVENC when FFmpeg can run `h264_nvenc`; otherwise it uses libx264. `--nvenc` remains available as a shortcut for `--encoder nvenc`.
 
 Fastest review generation is usually:
 
@@ -202,6 +244,7 @@ If FFmpeg was not built with CUDA or NVENC support, use `--no-cuda-decode` and o
 The test suite uses Python's built-in `unittest` runner and does not require FFmpeg. The current tests cover pure helper behavior and safety-sensitive edge cases:
 
 - time formatting and millisecond carry behavior
+- FFmpeg analysis command construction for exact and approximate keyframe timestamp modes
 - live keyframe-spacing summary formatting
 - keyframe ordinal-to-timestamp mapping and fallback estimation
 - safe event output directory handling
