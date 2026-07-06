@@ -90,6 +90,7 @@ By default, each input creates only:
 
 No `<input_stem>_motion_review` directory is created during a normal review run. Use `--write-events-csv` if you also want an `events.csv` sidecar, or `--detect-only` if you only want the event log.
 Existing review MP4 files are not overwritten by default. Use `--overwrite` to replace an existing review file.
+Before scanning starts, the command prints an output preflight check showing the number of existing output files as of now, split into files that will not be overwritten and files that will be overwritten. Each input still checks the file state again when it actually starts, so later filesystem changes are handled according to the state at processing time.
 
 Example:
 
@@ -194,6 +195,8 @@ If motion is missed, decrease `--motion-threshold`, decrease `--pixel-threshold`
 
 ## Output Options
 
+Before processing any input, `motion-fast` reports how many target output files already exist as of that moment. The report separates files that will not be overwritten from files that will be overwritten. This is only an initial status snapshot; per-input processing still uses the file state at the moment that input starts.
+
 - `--out-dir PATH`: Directory for `events.csv` when it is written. With multiple inputs, this is used as a parent directory and each input gets its own `<input_stem>_motion_review` subdirectory. Existing unrelated files in this directory are left untouched.
 - `--keep-existing`: Compatibility option. Event output directories are never deleted; existing unrelated files are kept.
 - `--no-clobber`: Skip processing if the final review MP4 already exists. Default: enabled.
@@ -248,6 +251,7 @@ The test suite uses Python's built-in `unittest` runner and does not require FFm
 - live keyframe-spacing summary formatting
 - keyframe ordinal-to-timestamp mapping and fallback estimation
 - safe event output directory handling
+- initial existing-output preflight overwrite classification
 - per-input output directory naming for multiple inputs
 
 Run the tests from the repository root:

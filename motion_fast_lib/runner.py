@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import glob
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from .analysis import detect_motion
@@ -11,6 +12,13 @@ from .probe import ffprobe_video
 from .review import build_review_video, ffmpeg_encoder_usable, resolve_ffmpeg_threads
 from .models import Event
 from .utils import die, fmt_time
+
+
+@dataclass
+class ExistingOutputSummary:
+    total: int
+    will_not_overwrite: int
+    will_overwrite: int
 
 
 def prepare_output_dir(output_dir: Path, keep_existing: bool) -> None:
@@ -110,6 +118,57 @@ def output_dir_for_input(input_path: Path, args: argparse.Namespace, input_count
         return output_dir
 
     return output_dir / f"{input_path.stem}_motion_review"
+
+
+def existing_output_summary(
+    input_paths: list[Path],
+    args: argparse.Namespace,
+) -> ExistingOutputSummary:
+    total = 0
+    will_not_overwrite = 0
+    will_overwrite = 0
+    input_count = len(input_paths)
+    write_events = args.detect_only or args.write_events_csv
+
+    for input_path in input_paths:
+        output_dir = output_dir_for_input(input_path, args, input_count)
+        review_mp4 = input_path.parent / f"review_{input_path.stem}.mp4"
+        events_csv = output_dir / "events.csv"
+        review_exists = review_mp4.exists()
+
+        if not args.detect_only and review_exists:
+            total += 1
+            if args.no_clobber:
+                will_not_overwrite += 1
+            else:
+                will_overwrite += 1
+
+        if write_events and events_csv.exists():
+            total += 1
+            if args.no_clobber and not args.detect_only and review_exists:
+                will_not_overwrite += 1
+            else:
+                will_overwrite += 1
+
+    return ExistingOutputSummary(
+        total=total,
+        will_not_overwrite=will_not_overwrite,
+        will_overwrite=will_overwrite,
+    )
+
+
+def print_existing_output_summary(
+    input_paths: list[Path],
+    args: argparse.Namespace,
+) -> None:
+    summary = existing_output_summary(input_paths, args)
+
+    print("Output preflight check (state as of now)")
+    print(f"  Existing output files : {summary.total}")
+    print(f"  Will not overwrite    : {summary.will_not_overwrite}")
+    print(f"  Will overwrite        : {summary.will_overwrite}")
+    print("Processing still checks file state again when each input starts.")
+    print()
 
 
 def process_input(

@@ -13,7 +13,11 @@ from motion_fast_lib.analysis import (
     summarize_live_keyframe_spacing,
 )
 from motion_fast_lib.models import MotionFrame
-from motion_fast_lib.runner import output_dir_for_input, prepare_output_dir
+from motion_fast_lib.runner import (
+    existing_output_summary,
+    output_dir_for_input,
+    prepare_output_dir,
+)
 from motion_fast_lib.utils import fmt_time
 
 
@@ -151,6 +155,83 @@ class OutputDirectoryTests(unittest.TestCase):
         output_dir = output_dir_for_input(Path("camera.avi"), args, input_count=2)
 
         self.assertEqual(output_dir, Path("reviews").resolve() / "camera_motion_review")
+
+    def test_existing_review_is_reported_as_not_overwritten_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = Path(tmp) / "camera.avi"
+            input_path.write_text("", encoding="utf-8")
+            (Path(tmp) / "review_camera.mp4").write_text("", encoding="utf-8")
+            args = argparse.Namespace(
+                out_dir=None,
+                detect_only=False,
+                write_events_csv=False,
+                no_clobber=True,
+            )
+
+            summary = existing_output_summary([input_path], args)
+
+            self.assertEqual(summary.total, 1)
+            self.assertEqual(summary.will_not_overwrite, 1)
+            self.assertEqual(summary.will_overwrite, 0)
+
+    def test_existing_review_is_reported_as_overwritten_with_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = Path(tmp) / "camera.avi"
+            input_path.write_text("", encoding="utf-8")
+            (Path(tmp) / "review_camera.mp4").write_text("", encoding="utf-8")
+            args = argparse.Namespace(
+                out_dir=None,
+                detect_only=False,
+                write_events_csv=False,
+                no_clobber=False,
+            )
+
+            summary = existing_output_summary([input_path], args)
+
+            self.assertEqual(summary.total, 1)
+            self.assertEqual(summary.will_not_overwrite, 0)
+            self.assertEqual(summary.will_overwrite, 1)
+
+    def test_existing_events_csv_is_reported_as_overwritten_when_written(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = Path(tmp) / "camera.avi"
+            input_path.write_text("", encoding="utf-8")
+            output_dir = Path(tmp) / "camera_motion_review"
+            output_dir.mkdir()
+            (output_dir / "events.csv").write_text("", encoding="utf-8")
+            args = argparse.Namespace(
+                out_dir=None,
+                detect_only=True,
+                write_events_csv=False,
+                no_clobber=True,
+            )
+
+            summary = existing_output_summary([input_path], args)
+
+            self.assertEqual(summary.total, 1)
+            self.assertEqual(summary.will_not_overwrite, 0)
+            self.assertEqual(summary.will_overwrite, 1)
+
+    def test_existing_events_csv_is_not_overwritten_when_review_skip_applies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = Path(tmp) / "camera.avi"
+            input_path.write_text("", encoding="utf-8")
+            (Path(tmp) / "review_camera.mp4").write_text("", encoding="utf-8")
+            output_dir = Path(tmp) / "camera_motion_review"
+            output_dir.mkdir()
+            (output_dir / "events.csv").write_text("", encoding="utf-8")
+            args = argparse.Namespace(
+                out_dir=None,
+                detect_only=False,
+                write_events_csv=True,
+                no_clobber=True,
+            )
+
+            summary = existing_output_summary([input_path], args)
+
+            self.assertEqual(summary.total, 2)
+            self.assertEqual(summary.will_not_overwrite, 2)
+            self.assertEqual(summary.will_overwrite, 0)
 
 
 if __name__ == "__main__":

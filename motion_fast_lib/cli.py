@@ -8,7 +8,7 @@ import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-from .runner import process_input, resolve_input_paths
+from .runner import print_existing_output_summary, process_input, resolve_input_paths
 from .utils import die
 
 
@@ -320,6 +320,7 @@ def main() -> None:
         die("ffprobe was not found on PATH")
 
     input_paths = resolve_input_paths(args.inputs)
+    print_existing_output_summary(input_paths, args)
 
     if args.jobs == 1 or len(input_paths) == 1:
         for index, input_path in enumerate(input_paths, start=1):
