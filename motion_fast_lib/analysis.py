@@ -322,15 +322,14 @@ def detect_motion(
     if pipe.stdout is None:
         die("Could not read FFmpeg stdout")
 
-    if collect_keyframe_timestamps or collect_progress:
-        if pipe.stderr is None:
-            die("Could not read FFmpeg stderr")
-        stderr_thread = threading.Thread(
-            target=read_showinfo_stderr,
-            args=(pipe.stderr, timestamp_queue, progress_queue, stderr_lines),
-            daemon=True,
-        )
-        stderr_thread.start()
+    if pipe.stderr is None:
+        die("Could not read FFmpeg stderr")
+    stderr_thread = threading.Thread(
+        target=read_showinfo_stderr,
+        args=(pipe.stderr, timestamp_queue, progress_queue, stderr_lines),
+        daemon=True,
+    )
+    stderr_thread.start()
 
     previous_i16: np.ndarray | None = None
     current_i16: np.ndarray | None = None
@@ -485,24 +484,17 @@ def detect_motion(
 
     stderr_output = b""
 
-    if collect_keyframe_timestamps or collect_progress:
-        try:
-            pipe.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pipe.kill()
-            pipe.wait()
+    try:
+        pipe.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pipe.kill()
+        pipe.wait()
 
-        if stderr_thread is not None:
-            stderr_thread.join()
-        drain_timestamp_queue(timestamp_queue, keyframe_timestamps)
-        last_progress_s = drain_progress_queue(progress_queue, last_progress_s)
-        stderr_output = "\n".join(stderr_lines).encode()
-    else:
-        try:
-            _, stderr_output = pipe.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            pipe.kill()
-            _, stderr_output = pipe.communicate()
+    if stderr_thread is not None:
+        stderr_thread.join()
+    drain_timestamp_queue(timestamp_queue, keyframe_timestamps)
+    last_progress_s = drain_progress_queue(progress_queue, last_progress_s)
+    stderr_output = "\n".join(stderr_lines).encode()
 
     if pipe.returncode not in (0, None):
         print()

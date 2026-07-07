@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import io
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from motion_fast_lib.analysis import (
     build_decode_command,
@@ -13,6 +16,7 @@ from motion_fast_lib.analysis import (
     summarize_live_keyframe_spacing,
 )
 from motion_fast_lib.models import MotionFrame
+from motion_fast_lib.probe import ffprobe_video
 from motion_fast_lib.runner import (
     existing_output_summary,
     output_dir_for_input,
@@ -129,7 +133,7 @@ class OutputDirectoryTests(unittest.TestCase):
             unrelated = output_dir / "notes.txt"
             unrelated.write_text("keep me", encoding="utf-8")
 
-            prepare_output_dir(output_dir, keep_existing=False)
+            prepare_output_dir(output_dir)
 
             self.assertEqual(unrelated.read_text(encoding="utf-8"), "keep me")
 
@@ -145,16 +149,22 @@ class OutputDirectoryTests(unittest.TestCase):
             # the expected failure path does not pollute successful test output.
             with contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
-                    prepare_output_dir(output_path, keep_existing=False)
+                    prepare_output_dir(output_path)
 
     def test_multiple_inputs_use_per_input_subdirectories(self) -> None:
         # For multiple input videos, a single --out-dir acts as a parent folder.
-        # Each input gets its own generated subdirectory so their events.csv
-        # files cannot overwrite each other.
+        # Each input gets its own generated subdirectory. A short hash of the
+        # resolved input path prevents same-stem files from colliding.
         args = argparse.Namespace(out_dir=Path("reviews"))
         output_dir = output_dir_for_input(Path("camera.avi"), args, input_count=2)
+        input_hash = hashlib.sha1(
+            str(Path("camera.avi").resolve()).encode("utf-8")
+        ).hexdigest()[:8]
 
-        self.assertEqual(output_dir, Path("reviews").resolve() / "camera_motion_review")
+        self.assertEqual(
+            output_dir,
+            Path("reviews").resolve() / f"camera_{input_hash}_motion_review",
+        )
 
     def test_existing_review_is_reported_as_not_overwritten_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -232,6 +242,31 @@ class OutputDirectoryTests(unittest.TestCase):
             self.assertEqual(summary.total, 2)
             self.assertEqual(summary.will_not_overwrite, 2)
             self.assertEqual(summary.will_overwrite, 0)
+
+
+class ProbeTests(unittest.TestCase):
+    def test_ffprobe_rejects_invalid_json_with_system_exit(self) -> None:
+        with mock.patch(
+            "motion_fast_lib.probe.run_command",
+            return_value=SimpleNamespace(stdout="not json"),
+        ):
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    ffprobe_video(Path("bad.avi"))
+
+    def test_ffprobe_rejects_unparseable_duration_with_system_exit(self) -> None:
+        output = (
+            '{"streams":[{"width":320,"height":240,'
+            '"avg_frame_rate":"25/1","r_frame_rate":"25/1",'
+            '"duration":"N/A"}]}'
+        )
+        with mock.patch(
+            "motion_fast_lib.probe.run_command",
+            return_value=SimpleNamespace(stdout=output),
+        ):
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    ffprobe_video(Path("bad.avi"))
 
 
 if __name__ == "__main__":

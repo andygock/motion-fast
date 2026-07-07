@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +22,7 @@ class ExistingOutputSummary:
     will_overwrite: int
 
 
-def prepare_output_dir(output_dir: Path, keep_existing: bool) -> None:
+def prepare_output_dir(output_dir: Path) -> None:
     if output_dir.exists():
         if not output_dir.is_dir():
             die(f"Output path exists and is not a directory: {output_dir}")
@@ -117,7 +118,8 @@ def output_dir_for_input(input_path: Path, args: argparse.Namespace, input_count
     if input_count == 1:
         return output_dir
 
-    return output_dir / f"{input_path.stem}_motion_review"
+    input_hash = hashlib.sha1(str(input_path.resolve()).encode("utf-8")).hexdigest()[:8]
+    return output_dir / f"{input_path.stem}_{input_hash}_motion_review"
 
 
 def existing_output_summary(
@@ -194,7 +196,7 @@ def process_input(
     start_wall = time.time()
 
     if write_events:
-        prepare_output_dir(output_dir, keep_existing=args.keep_existing)
+        prepare_output_dir(output_dir)
 
     info = ffprobe_video(input_path)
 
